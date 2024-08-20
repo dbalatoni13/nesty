@@ -11,8 +11,8 @@ pub struct NES {
 }
 
 impl NES {
-    pub fn load_rom(&mut self, rom: Vec<u8>) {
-        self.cpu.load_rom(rom)
+    pub fn load_rom(&mut self, ines: Vec<u8>) {
+        self.cpu.load_rom(ines)
     }
 
     pub fn run(&mut self) {

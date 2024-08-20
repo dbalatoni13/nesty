@@ -187,41 +187,41 @@ const VRAM_SIZE: usize = 2 * 1024;
 pub struct PPU {
     memory: Vec<u8>,
 
-    reg_PPUCTRL: RegPPUCtrl,
-    reg_PPUMASK: RegPPUMask,
-    reg_PPUSTATUS: RegPPUStatus,
-    reg_OAMADDR: u8,
-    reg_OAMDATA: u8,
-    reg_PPUSCROLL: u8,
-    reg_PPUADDR: u8,
-    reg_PPUDATA: u8,
-    reg_OAMDMA: u8,
+    reg_ppuctrl: RegPPUCtrl,
+    reg_ppumask: RegPPUMask,
+    reg_ppustatus: RegPPUStatus,
+    reg_oamaddr: u8,
+    reg_oamdata: u8,
+    reg_ppuscroll: u8,
+    reg_ppuaddr: u8,
+    reg_ppudata: u8,
+    reg_oamdma: u8,
 }
 
 impl PPU {
     pub fn read_reg(&self, reg: u8) -> u8 {
         match reg {
-            0 => self.reg_PPUCTRL.into_bits(),
-            1 => self.reg_PPUMASK.into_bits(),
-            2 => self.reg_PPUSTATUS.into_bits(),
-            3 => self.reg_OAMADDR,
-            4 => self.reg_OAMDATA,
-            5 => self.reg_PPUSCROLL,
-            6 => self.reg_PPUADDR,
-            7 => self.reg_PPUDATA,
+            0 => self.reg_ppuctrl.into_bits(),
+            1 => self.reg_ppumask.into_bits(),
+            2 => self.reg_ppustatus.into_bits(),
+            3 => self.reg_oamaddr,
+            4 => self.reg_oamdata,
+            5 => self.reg_ppuscroll,
+            6 => self.reg_ppuaddr,
+            7 => self.reg_ppudata,
             _ => panic!("Failed to read reg"),
         }
     }
     pub fn write_reg(&mut self, reg: u8, value: u8) {
         match reg {
-            0 => self.reg_PPUCTRL = RegPPUCtrl::from_bits(value),
-            1 => self.reg_PPUMASK = RegPPUMask::from_bits(value),
-            2 => self.reg_PPUSTATUS = RegPPUStatus::from_bits(value),
-            3 => self.reg_OAMADDR = value,
-            4 => self.reg_OAMDATA = value,
-            5 => self.reg_PPUSCROLL = value,
-            6 => self.reg_PPUADDR = value,
-            7 => self.reg_PPUDATA = value,
+            0 => self.reg_ppuctrl = RegPPUCtrl::from_bits(value),
+            1 => self.reg_ppumask = RegPPUMask::from_bits(value),
+            2 => self.reg_ppustatus = RegPPUStatus::from_bits(value),
+            3 => self.reg_oamaddr = value,
+            4 => self.reg_oamdata = value,
+            5 => self.reg_ppuscroll = value,
+            6 => self.reg_ppuaddr = value,
+            7 => self.reg_ppudata = value,
             _ => panic!("Failed to write reg"),
         }
     }
@@ -231,20 +231,20 @@ impl Powerable for PPU {
     fn power_on(&mut self) {
         self.memory = vec![0; VRAM_SIZE];
 
-        self.reg_PPUCTRL = RegPPUCtrl::from_bits(0);
-        self.reg_PPUMASK = RegPPUMask::from_bits(0);
-        self.reg_PPUSTATUS.set_spr_0_hit(false);
-        self.reg_OAMADDR = 0;
-        self.reg_PPUSCROLL = 0;
-        self.reg_PPUADDR = 0;
-        self.reg_PPUDATA = 0;
+        self.reg_ppuctrl = RegPPUCtrl::from_bits(0);
+        self.reg_ppumask = RegPPUMask::from_bits(0);
+        self.reg_ppustatus.set_spr_0_hit(false);
+        self.reg_oamaddr = 0;
+        self.reg_ppuscroll = 0;
+        self.reg_ppuaddr = 0;
+        self.reg_ppudata = 0;
     }
     fn reset(&mut self) {
         self.memory = vec![0; VRAM_SIZE];
 
-        self.reg_PPUCTRL = RegPPUCtrl::from_bits(0);
-        self.reg_PPUMASK = RegPPUMask::from_bits(0);
-        self.reg_PPUSCROLL = 0;
-        self.reg_PPUDATA = 0;
+        self.reg_ppuctrl = RegPPUCtrl::from_bits(0);
+        self.reg_ppumask = RegPPUMask::from_bits(0);
+        self.reg_ppuscroll = 0;
+        self.reg_ppudata = 0;
     }
 }

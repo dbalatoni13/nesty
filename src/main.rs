@@ -6,17 +6,17 @@ use std::io::Read;
 
 fn main() {
     let mut nes = NES::default();
-    let rom = read_rom();
+    let ines = read_ines_file();
     nes.power_on();
-    nes.load_rom(rom);
+    nes.load_rom(ines);
     nes.run();
 }
 
-fn read_rom() -> Vec<u8> {
+fn read_ines_file() -> Vec<u8> {
     let rom_file_name = env::args().nth(1).unwrap(); // TODO error handling
-    let mut rom_file = File::open(rom_file_name).unwrap();
+    let mut ines_file = File::open(rom_file_name).unwrap();
 
-    let mut rom = Vec::new();
-    rom_file.read_to_end(&mut rom).unwrap();
-    rom
+    let mut ines = Vec::new();
+    ines_file.read_to_end(&mut ines).unwrap();
+    ines
 }

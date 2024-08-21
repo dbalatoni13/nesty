@@ -4,6 +4,7 @@ use crate::ines::{Flags6, NametableArrangement};
 use crate::nes::Powerable;
 use crate::ppu::PPU;
 use crate::ram::RAM;
+use crate::utils::build_u16;
 
 #[derive(Default)]
 pub struct Interconnect {
@@ -41,6 +42,10 @@ impl Interconnect {
         };
         // println!("Read {:#02x} from address {:#02x}", val, address);
         val
+    }
+
+    pub fn read_mem_word(&self, address: u16) -> u16 {
+        build_u16(self.read_mem(address + 1), self.read_mem(address))
     }
 
     pub fn write_mem(&mut self, address: u16, value: u8) {

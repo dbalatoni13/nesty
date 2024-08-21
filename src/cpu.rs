@@ -1,5 +1,6 @@
 use crate::interconnect::Interconnect;
 use crate::nes::Powerable;
+use bitfield_struct::bitfield;
 //use enum_map::{enum_map, Enum, EnumMap};
 //use once_cell::sync::Lazy;
 
@@ -127,6 +128,26 @@ fn set_register_with_flags(reg: &mut u8, flag_z: &mut bool, flag_n: &mut bool, v
     *flag_n = *reg & 0b10000000 != 0;
 }
 
+#[bitfield(u8)]
+struct Status {
+    #[bits(1)]
+    carry: bool,
+    #[bits(1)]
+    zero: bool,
+    #[bits(1)]
+    interrupt_disable: bool,
+    #[bits(1)]
+    decimal: bool,
+    #[bits(1)]
+    b: bool,
+    #[bits(1)]
+    one: bool,
+    #[bits(1)]
+    overflow: bool,
+    #[bits(1)]
+    negative: bool,
+}
+
 #[derive(Default)]
 pub struct CPU {
     cycle: u64,
@@ -139,12 +160,7 @@ pub struct CPU {
     reg_y: u8,
     reg_pc: u16,
     reg_s: u8,
-    flag_c: bool,
-    flag_z: bool,
-    flag_i: bool,
-    flag_d: bool,
-    flag_v: bool,
-    flag_n: bool,
+    status: Status,
 
     ic: Interconnect,
 }
@@ -388,7 +404,7 @@ impl CPU {
             AddressingMode::Relative => 1,
             AddressingMode::Indirect => 1,
         };
-        if self.operands.len() == num_of_operands {
+        if self.operands.len() != num_of_operands {
             self.reg_pc += 1;
             return;
         }
@@ -435,26 +451,42 @@ impl CPU {
             InstructionType::Illegal => {
                 println!("Illegal instruction {:?}", inst)
             }
-            InstructionType::ADC => {}
+            InstructionType::ADC => {
+                // TODO does this work? we need to consider 'decimal mode' too
+                let old_bit_7 = self.reg_a & 0b10000000 != 0;
+                let (sum, overflow) =
+                    (self.reg_a as i8).overflowing_add(value as i8 + self.status.carry() as i8);
+                self.reg_a = sum as u8;
+                self.status.set_carry(overflow);
+                let new_bit_7 = self.reg_a & 0b10000000 != 0;
+                self.status.set_overflow(old_bit_7 ^ new_bit_7);
+                self.status.set_zero(self.reg_a == 0);
+                self.status.set_negative(new_bit_7);
+            }
             InstructionType::AND => {
                 let anded = self.reg_a & value;
-                set_register_with_flags(&mut self.reg_a, &mut self.flag_z, &mut self.flag_n, anded);
+                set_register_with_flags(
+                    &mut self.reg_a,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
+                    anded,
+                );
             }
             InstructionType::ASL => match inst.addr_mode {
                 AddressingMode::Accumulator => {
                     let old_bit_7 = self.reg_a & 0b10000000 != 0;
                     self.reg_a = self.reg_a.wrapping_shl(1);
-                    self.flag_c = old_bit_7;
-                    self.flag_z = self.reg_a == 0;
-                    self.flag_n = self.reg_a & 0b10000000 != 0;
+                    self.status.set_carry(old_bit_7);
+                    self.status.set_zero(self.reg_a == 0);
+                    self.status.set_negative(self.reg_a & 0b10000000 != 0);
                 }
                 _ => {
                     let old_bit_7 = value & 0b10000000 != 0;
                     let rot = value.wrapping_shl(1);
                     self.ic.write_mem(operand, rot);
-                    self.flag_c = old_bit_7;
-                    self.flag_z = self.reg_a == 0; // TODO is this right?
-                    self.flag_n = rot & 0b10000000 != 0;
+                    self.status.set_carry(old_bit_7);
+                    self.status.set_zero(self.reg_a == 0); // TODO is this right?
+                    self.status.set_negative(rot & 0b10000000 != 0);
                 }
             },
             InstructionType::BCC => {}
@@ -468,16 +500,16 @@ impl CPU {
             InstructionType::BVC => {}
             InstructionType::BVS => {}
             InstructionType::CLC => {
-                self.flag_c = false;
+                self.status.set_carry(false);
             }
             InstructionType::CLD => {
-                self.flag_d = false;
+                self.status.set_decimal(false);
             }
             InstructionType::CLI => {
-                self.flag_i = false;
+                self.status.set_decimal(false);
             }
             InstructionType::CLV => {
-                self.flag_v = false;
+                self.status.set_overflow(false);
             }
             InstructionType::CMP => {}
             InstructionType::CPX => {}
@@ -489,8 +521,8 @@ impl CPU {
                 let eorred = self.reg_a ^ value;
                 set_register_with_flags(
                     &mut self.reg_a,
-                    &mut self.flag_z,
-                    &mut self.flag_n,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
                     eorred,
                 );
             }
@@ -499,101 +531,156 @@ impl CPU {
             }
             InstructionType::INX => {
                 let inc = self.reg_x.wrapping_add(1);
-                set_register_with_flags(&mut self.reg_x, &mut self.flag_z, &mut self.flag_n, inc);
+                set_register_with_flags(
+                    &mut self.reg_x,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
+                    inc,
+                );
             }
             InstructionType::INY => {
                 let inc = self.reg_y.wrapping_add(1);
-                set_register_with_flags(&mut self.reg_y, &mut self.flag_z, &mut self.flag_n, inc);
+                set_register_with_flags(
+                    &mut self.reg_y,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
+                    inc,
+                );
             }
             InstructionType::JMP => {}
             InstructionType::JSR => {}
             InstructionType::LDA => {
-                set_register_with_flags(&mut self.reg_a, &mut self.flag_z, &mut self.flag_n, value);
+                set_register_with_flags(
+                    &mut self.reg_a,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
+                    value,
+                );
             }
             InstructionType::LDX => {
-                set_register_with_flags(&mut self.reg_x, &mut self.flag_z, &mut self.flag_n, value);
+                set_register_with_flags(
+                    &mut self.reg_x,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
+                    value,
+                );
             }
             InstructionType::LDY => {
-                set_register_with_flags(&mut self.reg_y, &mut self.flag_z, &mut self.flag_n, value);
+                set_register_with_flags(
+                    &mut self.reg_y,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
+                    value,
+                );
             }
             InstructionType::LSR => match inst.addr_mode {
                 AddressingMode::Accumulator => {
                     let old_bit_0 = self.reg_a & 1 != 0;
                     self.reg_a = self.reg_a.wrapping_shr(1);
-                    self.flag_c = old_bit_0;
-                    self.flag_z = self.reg_a == 0;
-                    self.flag_n = self.reg_a & 0b10000000 != 0;
+                    self.status.set_carry(old_bit_0);
+                    self.status.set_zero(self.reg_a == 0);
+                    self.status.set_negative(self.reg_a & 0b10000000 != 0);
                 }
                 _ => {
                     let old_bit_0 = value & 1 != 0;
                     let rot = value.wrapping_shr(1);
                     self.ic.write_mem(operand, rot);
-                    self.flag_c = old_bit_0;
-                    self.flag_z = rot == 0; // TODO is this right?
-                    self.flag_n = rot & 0b10000000 != 0;
+                    self.status.set_carry(old_bit_0);
+                    self.status.set_zero(rot == 0); // TODO is this right?
+                    self.status.set_negative(rot & 0b10000000 != 0);
                 }
             },
             InstructionType::NOP => {}
             InstructionType::ORA => {
                 let orred = self.reg_a | value;
-                set_register_with_flags(&mut self.reg_a, &mut self.flag_z, &mut self.flag_n, orred);
+                set_register_with_flags(
+                    &mut self.reg_a,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
+                    orred,
+                );
             }
             InstructionType::PHA => {
                 self.ic.write_mem(0x100 + self.reg_s as u16, self.reg_a);
                 self.reg_s -= 1;
             }
-            InstructionType::PHP => {}
+            InstructionType::PHP => {
+                self.ic
+                    .write_mem(0x100 + self.reg_s as u16, self.status.into_bits());
+                self.reg_s -= 1;
+            }
             InstructionType::PLA => {
                 let s = self.ic.read_mem(0x100 + self.reg_s as u16);
-                set_register_with_flags(&mut self.reg_a, &mut self.flag_z, &mut self.flag_n, s);
+                set_register_with_flags(
+                    &mut self.reg_a,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
+                    s,
+                );
                 self.reg_s += 1;
             }
-            InstructionType::PLP => {}
+            InstructionType::PLP => {
+                let s = self.ic.read_mem(0x100 + self.reg_s as u16);
+                self.status = Status::from_bits(s);
+                self.reg_s += 1;
+            }
             InstructionType::ROL => match inst.addr_mode {
                 AddressingMode::Accumulator => {
                     let old_bit_7 = self.reg_a & 0b10000000 != 0;
-                    self.reg_a = self.reg_a.wrapping_shl(1) | self.flag_c as u8;
-                    self.flag_c = old_bit_7;
-                    self.flag_z = self.reg_a == 0;
-                    self.flag_n = self.reg_a & 0b10000000 != 0;
+                    self.reg_a = self.reg_a.wrapping_shl(1) | self.status.carry() as u8;
+                    self.status.set_carry(old_bit_7);
+                    self.status.set_zero(self.reg_a == 0);
+                    self.status.set_negative(self.reg_a & 0b10000000 != 0);
                 }
                 _ => {
                     let old_bit_7 = value & 0b10000000 != 0;
-                    let rot = value.wrapping_shl(1) | self.flag_c as u8;
+                    let rot = value.wrapping_shl(1) | self.status.carry() as u8;
                     self.ic.write_mem(operand, rot);
-                    self.flag_c = old_bit_7;
-                    self.flag_z = self.reg_a == 0; // TODO is this right?
-                    self.flag_n = rot & 0b10000000 != 0;
+                    self.status.set_carry(old_bit_7);
+                    self.status.set_zero(self.reg_a == 0); // TODO is this right?
+                    self.status.set_negative(rot & 0b10000000 != 0);
                 }
             },
             InstructionType::ROR => match inst.addr_mode {
                 AddressingMode::Accumulator => {
                     let old_bit_0 = self.reg_a & 1 != 0;
-                    self.reg_a = self.reg_a.wrapping_shl(1) | (self.flag_c as u8).wrapping_shl(7);
-                    self.flag_c = old_bit_0;
-                    self.flag_z = self.reg_a == 0;
-                    self.flag_n = self.reg_a & 0b10000000 != 0;
+                    self.reg_a =
+                        self.reg_a.wrapping_shl(1) | (self.status.carry() as u8).wrapping_shl(7);
+                    self.status.set_carry(old_bit_0);
+                    self.status.set_zero(self.reg_a == 0);
+                    self.status.set_negative(self.reg_a & 0b10000000 != 0);
                 }
                 _ => {
                     let old_bit_0 = value & 1 != 0;
-                    let rot = value.wrapping_shr(1) | (self.flag_c as u8).wrapping_shl(7);
+                    let rot = value.wrapping_shr(1) | (self.status.carry() as u8).wrapping_shl(7);
                     self.ic.write_mem(operand, rot);
-                    self.flag_c = old_bit_0;
-                    self.flag_z = self.reg_a == 0; // TODO is this right?
-                    self.flag_n = rot & 0b10000000 != 0;
+                    self.status.set_carry(old_bit_0);
+                    self.status.set_zero(self.reg_a == 0); // TODO is this right?
+                    self.status.set_negative(rot & 0b10000000 != 0);
                 }
             },
             InstructionType::RTI => {}
             InstructionType::RTS => {}
-            InstructionType::SBC => {}
+            InstructionType::SBC => {
+                // TODO does this work? we need to consider 'decimal mode' too
+                let old_bit_7 = self.reg_a & 0b10000000 != 0;
+                let (sum, overflow) =
+                    (self.reg_a as i8).overflowing_sub(value as i8 + self.status.carry() as i8);
+                self.reg_a = sum as u8;
+                self.status.set_carry(!overflow);
+                let new_bit_7 = self.reg_a & 0b10000000 != 0;
+                self.status.set_overflow(old_bit_7 ^ new_bit_7);
+                self.status.set_zero(self.reg_a == 0);
+                self.status.set_negative(new_bit_7);
+            }
             InstructionType::SEC => {
-                self.flag_c = true;
+                self.status.set_carry(true);
             }
             InstructionType::SED => {
-                self.flag_d = true;
+                self.status.set_decimal(true);
             }
             InstructionType::SEI => {
-                self.flag_i = true;
+                self.status.set_interrupt_disable(true);
             }
             InstructionType::STA => {
                 self.ic.write_mem(operand, self.reg_a);
@@ -607,48 +694,48 @@ impl CPU {
             InstructionType::TAX => {
                 set_register_with_flags(
                     &mut self.reg_x,
-                    &mut self.flag_z,
-                    &mut self.flag_n,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
                     self.reg_a,
                 );
             }
             InstructionType::TAY => {
                 set_register_with_flags(
                     &mut self.reg_y,
-                    &mut self.flag_z,
-                    &mut self.flag_n,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
                     self.reg_a,
                 );
             }
             InstructionType::TSX => {
                 set_register_with_flags(
                     &mut self.reg_x,
-                    &mut self.flag_z,
-                    &mut self.flag_n,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
                     self.reg_s,
                 );
             }
             InstructionType::TXA => {
                 set_register_with_flags(
                     &mut self.reg_a,
-                    &mut self.flag_z,
-                    &mut self.flag_n,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
                     self.reg_x,
                 );
             }
             InstructionType::TXS => {
                 set_register_with_flags(
                     &mut self.reg_s,
-                    &mut self.flag_z,
-                    &mut self.flag_n,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
                     self.reg_x,
                 );
             }
             InstructionType::TYA => {
                 set_register_with_flags(
                     &mut self.reg_a,
-                    &mut self.flag_z,
-                    &mut self.flag_n,
+                    &mut self.status.zero(),
+                    &mut self.status.negative(),
                     self.reg_y,
                 );
             }
@@ -676,12 +763,12 @@ impl Powerable for CPU {
         self.reg_y = 0;
         self.reg_pc = 0xFFFC;
         self.reg_s = 0xFD;
-        self.flag_c = false;
-        self.flag_z = false;
-        self.flag_i = true;
-        self.flag_d = false;
-        self.flag_v = false;
-        self.flag_n = false;
+        self.status.set_carry(false);
+        self.status.set_zero(false);
+        self.status.set_interrupt_disable(true);
+        self.status.set_decimal(false);
+        self.status.set_overflow(false);
+        self.status.set_negative(false);
 
         self.operands = vec![];
         self.cycle = 0;
@@ -691,7 +778,7 @@ impl Powerable for CPU {
 
         self.reg_pc = 0xFFFC;
         self.reg_s -= 3;
-        self.flag_i = true;
+        self.status.set_interrupt_disable(true);
 
         self.operands = vec![];
         self.cycle = 0;

@@ -2,6 +2,7 @@ pub mod apu;
 pub mod cartridge;
 pub mod cpu;
 pub mod ines;
+pub mod instructions;
 pub mod interconnect;
 pub mod nes;
 pub mod ppu;

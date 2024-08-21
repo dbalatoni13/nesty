@@ -1,5 +1,6 @@
 use crate::interconnect::Interconnect;
 use crate::nes::Powerable;
+use crate::utils::build_u16;
 use bitfield_struct::bitfield;
 //use enum_map::{enum_map, Enum, EnumMap};
 //use once_cell::sync::Lazy;
@@ -121,11 +122,11 @@ struct Instruction {
     addr_mode: AddressingMode,
 }
 
-fn set_register_with_flags(reg: &mut u8, flag_z: &mut bool, flag_n: &mut bool, value: u8) {
+fn set_register_with_flags(reg: &mut u8, status: &mut Status, value: u8) {
     // TODO maybe extract the first line so that this function becomes more universal
     *reg = value;
-    *flag_z = *reg == 0;
-    *flag_n = *reg & 0b10000000 != 0;
+    status.set_zero(*reg == 0);
+    status.set_negative(*reg & 0b10000000 != 0);
 }
 
 #[bitfield(u8)]
@@ -171,7 +172,7 @@ impl CPU {
     }
 
     pub fn run(&mut self) {
-        for _ in 0..100 {
+        for _ in 0..200 {
             self.do_cycle();
         }
     }
@@ -182,9 +183,11 @@ impl CPU {
             self.decode();
             self.execute();
         } else {
-            let lsb = self.ic.read_mem(self.reg_pc) as u16;
-            let msb = self.ic.read_mem(self.reg_pc + 1) as u16;
-            self.reg_pc = msb << 8 | lsb; // jump to start of code
+            // self.reg_pc = build_u16(
+            //     self.ic.read_mem(self.reg_pc),
+            //     self.ic.read_mem(self.reg_pc + 1),
+            // ); // jump to start of code
+            self.reg_pc = 0xC5F5;
             println!("Started execution at {:#02x}", self.reg_pc);
         }
 
@@ -411,24 +414,21 @@ impl CPU {
 
         let operand = match inst.addr_mode {
             AddressingMode::Illegal => 0,
+            // handle zeropage address correctly when it would cross a page boundary
             AddressingMode::ZeroPageIndexedX => self.operands[0].wrapping_add(self.reg_x) as u16,
             AddressingMode::ZeroPageIndexedY => self.operands[0].wrapping_add(self.reg_y) as u16,
             AddressingMode::AbsoluteIndexedX => {
-                ((self.operands[1] as u16) << 8) + (self.operands[0] + self.reg_x) as u16
+                build_u16(self.operands[1], self.operands[0] + self.reg_x)
             }
             AddressingMode::AbsoluteIndexedY => {
-                ((self.operands[1] as u16) << 8) + (self.operands[0] + self.reg_y) as u16
+                build_u16(self.operands[1], self.operands[0] + self.reg_y)
             }
-            AddressingMode::IndexedIndirect => {
+            AddressingMode::IndexedIndirect => build_u16(
                 self.ic
-                    .read_mem(self.operands[0].wrapping_add(self.reg_x) as u16)
-                    as u16
-                    + self
-                        .ic
-                        .read_mem(self.operands[0].wrapping_add(self.reg_x).wrapping_add(1) as u16)
-                        as u16
-                        * 256
-            }
+                    .read_mem(self.operands[0].wrapping_add(self.reg_x).wrapping_add(1) as u16),
+                self.ic
+                    .read_mem(self.operands[0].wrapping_add(self.reg_x) as u16),
+            ),
             AddressingMode::IndirectIndexed => {
                 self.ic.read_mem(self.operands[0] as u16) as u16
                     + self.ic.read_mem(self.operands[0].wrapping_add(1) as u16) as u16 * 256
@@ -438,18 +438,33 @@ impl CPU {
             AddressingMode::Accumulator => self.reg_a as u16,
             AddressingMode::Immediate => self.operands[0] as u16,
             AddressingMode::ZeroPage => self.operands[0] as u16,
-            AddressingMode::Absolute => ((self.operands[1] as u16) << 8) + self.operands[0] as u16,
+            AddressingMode::Absolute => build_u16(self.operands[1], self.operands[0]),
             AddressingMode::Relative => (self.reg_pc as i32 + self.operands[0] as i8 as i32) as u16,
-            AddressingMode::Indirect => 1, // TODO implement
+            AddressingMode::Indirect => build_u16(
+                self.ic
+                    .read_mem(build_u16(self.operands[1], self.operands[0]) + 1),
+                self.ic
+                    .read_mem(build_u16(self.operands[1], self.operands[0])),
+            ),
         };
         let value = match inst.addr_mode {
             AddressingMode::Immediate => operand as u8,
             _ => self.ic.read_mem(operand),
         };
-
+        println!(
+            "Executed {:?} with {:02X}                A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{}",
+            inst,
+            value,
+            self.reg_a,
+            self.reg_x,
+            self.reg_y,
+            self.status.into_bits(),
+            self.reg_s,
+            self.cycle
+        );
         match inst.inst_type {
             InstructionType::Illegal => {
-                println!("Illegal instruction {:?}", inst)
+                //println!("Illegal instruction {:?}", inst);
             }
             InstructionType::ADC => {
                 // TODO does this work? we need to consider 'decimal mode' too
@@ -465,12 +480,7 @@ impl CPU {
             }
             InstructionType::AND => {
                 let anded = self.reg_a & value;
-                set_register_with_flags(
-                    &mut self.reg_a,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    anded,
-                );
+                set_register_with_flags(&mut self.reg_a, &mut self.status, anded);
             }
             InstructionType::ASL => match inst.addr_mode {
                 AddressingMode::Accumulator => {
@@ -519,59 +529,31 @@ impl CPU {
             InstructionType::DEY => {}
             InstructionType::EOR => {
                 let eorred = self.reg_a ^ value;
-                set_register_with_flags(
-                    &mut self.reg_a,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    eorred,
-                );
+                set_register_with_flags(&mut self.reg_a, &mut self.status, eorred);
             }
             InstructionType::INC => {
                 self.ic.write_mem(operand, value.wrapping_add(1));
             }
             InstructionType::INX => {
                 let inc = self.reg_x.wrapping_add(1);
-                set_register_with_flags(
-                    &mut self.reg_x,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    inc,
-                );
+                set_register_with_flags(&mut self.reg_x, &mut self.status, inc);
             }
             InstructionType::INY => {
                 let inc = self.reg_y.wrapping_add(1);
-                set_register_with_flags(
-                    &mut self.reg_y,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    inc,
-                );
+                set_register_with_flags(&mut self.reg_y, &mut self.status, inc);
             }
-            InstructionType::JMP => {}
+            InstructionType::JMP => {
+                self.reg_pc = operand;
+            }
             InstructionType::JSR => {}
             InstructionType::LDA => {
-                set_register_with_flags(
-                    &mut self.reg_a,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    value,
-                );
+                set_register_with_flags(&mut self.reg_a, &mut self.status, value);
             }
             InstructionType::LDX => {
-                set_register_with_flags(
-                    &mut self.reg_x,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    value,
-                );
+                set_register_with_flags(&mut self.reg_x, &mut self.status, value);
             }
             InstructionType::LDY => {
-                set_register_with_flags(
-                    &mut self.reg_y,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    value,
-                );
+                set_register_with_flags(&mut self.reg_y, &mut self.status, value);
             }
             InstructionType::LSR => match inst.addr_mode {
                 AddressingMode::Accumulator => {
@@ -593,12 +575,7 @@ impl CPU {
             InstructionType::NOP => {}
             InstructionType::ORA => {
                 let orred = self.reg_a | value;
-                set_register_with_flags(
-                    &mut self.reg_a,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    orred,
-                );
+                set_register_with_flags(&mut self.reg_a, &mut self.status, orred);
             }
             InstructionType::PHA => {
                 self.ic.write_mem(0x100 + self.reg_s as u16, self.reg_a);
@@ -611,12 +588,7 @@ impl CPU {
             }
             InstructionType::PLA => {
                 let s = self.ic.read_mem(0x100 + self.reg_s as u16);
-                set_register_with_flags(
-                    &mut self.reg_a,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    s,
-                );
+                set_register_with_flags(&mut self.reg_a, &mut self.status, s);
                 self.reg_s += 1;
             }
             InstructionType::PLP => {
@@ -692,55 +664,24 @@ impl CPU {
                 self.ic.write_mem(operand, self.reg_y);
             }
             InstructionType::TAX => {
-                set_register_with_flags(
-                    &mut self.reg_x,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    self.reg_a,
-                );
+                set_register_with_flags(&mut self.reg_x, &mut self.status, self.reg_a);
             }
             InstructionType::TAY => {
-                set_register_with_flags(
-                    &mut self.reg_y,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    self.reg_a,
-                );
+                set_register_with_flags(&mut self.reg_y, &mut self.status, self.reg_a);
             }
             InstructionType::TSX => {
-                set_register_with_flags(
-                    &mut self.reg_x,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    self.reg_s,
-                );
+                set_register_with_flags(&mut self.reg_x, &mut self.status, self.reg_s);
             }
             InstructionType::TXA => {
-                set_register_with_flags(
-                    &mut self.reg_a,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    self.reg_x,
-                );
+                set_register_with_flags(&mut self.reg_a, &mut self.status, self.reg_x);
             }
             InstructionType::TXS => {
-                set_register_with_flags(
-                    &mut self.reg_s,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    self.reg_x,
-                );
+                set_register_with_flags(&mut self.reg_s, &mut self.status, self.reg_x);
             }
             InstructionType::TYA => {
-                set_register_with_flags(
-                    &mut self.reg_a,
-                    &mut self.status.zero(),
-                    &mut self.status.negative(),
-                    self.reg_y,
-                );
+                set_register_with_flags(&mut self.reg_a, &mut self.status, self.reg_y);
             }
         }
-        println!("Executed {:?} with {:#02x}", inst, operand);
         if self.operands.len() == 0 {
             // Add extra cycle because the minimum is 2
             self.cycle += 1;
@@ -767,6 +708,7 @@ impl Powerable for CPU {
         self.status.set_zero(false);
         self.status.set_interrupt_disable(true);
         self.status.set_decimal(false);
+        self.status.set_one(true);
         self.status.set_overflow(false);
         self.status.set_negative(false);
 

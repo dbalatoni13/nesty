@@ -39,7 +39,7 @@ impl Interconnect {
             0x4020..=0xFFFF => self.cartridge.read_mem(address - 0x4020),
             _ => panic!("Address {} not implemented for read", address),
         };
-        println!("Read {:#02x} from address {:#02x}", val, address);
+        // println!("Read {:#02x} from address {:#02x}", val, address);
         val
     }
 
@@ -51,7 +51,7 @@ impl Interconnect {
             0x4020..=0xFFFF => self.cartridge.write_mem(address - 0x4020, value),
             _ => panic!("Address {} not implemented for read", address),
         }
-        println!("Wrote {:#02x} to address {:#02x}", value, address);
+        // println!("Wrote {:#02x} to address {:#02x}", value, address);
     }
 }
 

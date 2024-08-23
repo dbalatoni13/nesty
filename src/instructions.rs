@@ -1,3 +1,6 @@
+pub mod addressing;
+pub mod logic;
+
 #[derive(Debug)]
 pub enum InstructionType {
     Illegal,

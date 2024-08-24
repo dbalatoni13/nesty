@@ -174,7 +174,10 @@ pub fn get_inst_type(byte: u8) -> InstructionType {
                     6 => InstructionType::TSX,
                     _ => InstructionType::LDX,
                 },
-                0xC0 => InstructionType::DEC,
+                0xC0 => match (byte & 0b00011100) >> 2 {
+                    2 => InstructionType::DEX,
+                    _ => InstructionType::DEC,
+                },
                 0xE0 => match (byte & 0b00011100) >> 2 {
                     2 => InstructionType::NOP,
                     _ => InstructionType::LDX,

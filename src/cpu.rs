@@ -62,7 +62,7 @@ impl CPU {
     }
 
     pub fn run(&mut self) {
-        for _ in 0..100 {
+        for _ in 0..2000 {
             self.do_cycle();
         }
     }
@@ -91,18 +91,6 @@ impl CPU {
         self.reg_s += 1;
         self.ic.read_mem(0x100 + self.reg_s as u16)
     }
-
-    // fn push_to_stack_word(&mut self, value: u16) {
-    //     self.push_to_stack(get_msb(value));
-    //     self.push_to_stack(get_lsb(value));
-    // }
-
-    // fn pull_from_stack_word(&mut self) -> u16 {
-    //     let lsb = self.pull_from_stack();
-    //     let msb = self.pull_from_stack();
-
-    //     build_u16(msb, lsb)
-    // }
 
     fn fetch(&mut self) {
         if self.inst_queue.len() > 0 {
@@ -149,7 +137,6 @@ impl CPU {
                 //println!("Illegal instruction {:?}", inst);
             }
             InstructionType::ADC => {
-                // TODO does this work? we need to consider 'decimal mode' too
                 addressing::queue_push_memory_op(self, MemoryOp::Read);
                 self.inst_queue.push_back((logic::adc_1, 0));
             }
@@ -229,7 +216,8 @@ impl CPU {
             }
             InstructionType::DEC => {
                 addressing::queue_push_memory_op(self, MemoryOp::Read);
-                self.inst_queue.push_back((logic::dec_1, 0));
+                self.inst_queue.push_back((logic::dec_1, 1));
+                self.inst_queue.push_back((logic::dec_2, 1));
             }
             InstructionType::DEX => {
                 self.inst_queue.push_back((logic::dex_1, 0));
@@ -244,6 +232,7 @@ impl CPU {
             InstructionType::INC => {
                 addressing::queue_push_memory_op(self, MemoryOp::Read);
                 self.inst_queue.push_back((logic::inc_1, 1));
+                self.inst_queue.push_back((logic::inc_2, 1));
             }
             InstructionType::INX => {
                 self.inst_queue.push_back((logic::inx_1, 0));
@@ -287,13 +276,15 @@ impl CPU {
                 self.inst_queue.push_back((logic::pha_1, 1));
             }
             InstructionType::PHP => {
-                self.inst_queue.push_back((logic::php_1, 0));
+                self.inst_queue.push_back((logic::php_1, 1));
             }
             InstructionType::PLA => {
-                self.inst_queue.push_back((logic::pla_1, 0));
+                self.inst_queue.push_back((logic::pla_1, 1));
+                self.inst_queue.push_back((logic::nop, 1));
             }
             InstructionType::PLP => {
-                self.inst_queue.push_back((logic::plp_1, 0));
+                self.inst_queue.push_back((logic::plp_1, 1));
+                self.inst_queue.push_back((logic::nop, 1));
             }
             InstructionType::ROL => {
                 addressing::queue_push_memory_op(self, MemoryOp::Read);
@@ -304,13 +295,15 @@ impl CPU {
                 self.inst_queue.push_back((logic::ror_1, 0));
             }
             InstructionType::RTI => {
-                self.inst_queue.push_back((logic::rti_1, 0));
-                self.inst_queue.push_back((logic::rti_2, 0));
-                self.inst_queue.push_back((logic::rti_3, 0));
+                self.inst_queue.push_back((logic::rti_1, 1));
+                self.inst_queue.push_back((logic::rti_2, 1));
+                self.inst_queue.push_back((logic::rti_3, 1));
             }
             InstructionType::RTS => {
-                self.inst_queue.push_back((logic::rts_1, 0));
-                self.inst_queue.push_back((logic::rts_2, 0));
+                self.inst_queue.push_back((logic::rts_1, 1));
+                self.inst_queue.push_back((logic::nop, 1));
+                self.inst_queue.push_back((logic::rts_2, 1));
+                self.inst_queue.push_back((logic::nop, 1));
             }
             InstructionType::SBC => {
                 addressing::queue_push_memory_op(self, MemoryOp::Read);
@@ -357,7 +350,7 @@ impl CPU {
             }
         }
         if self.num_operands == 0 {
-            self.inst_queue.push_back((logic::nop_1, 1));
+            self.inst_queue.push_back((logic::nop, 1));
         }
         true
     }
@@ -368,19 +361,30 @@ impl CPU {
         }
         if !self.printed {
             println!(
-            "{:04X} {:?} val: {:02X} addr: {:02X}                A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{}",
-            self.reg_pc - 1 - self.num_operands as u16,
-            self.curr_inst.as_mut().unwrap(),
-            self.value,
-            self.addr,
-            self.reg_a,
-            self.reg_x,
-            self.reg_y,
-            self.status.into_bits(),
-            self.reg_s,
-            self.cycle_debug
-        );
+                "{:04X} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{}",
+                self.reg_pc - 1 - self.num_operands as u16,
+                self.reg_a,
+                self.reg_x,
+                self.reg_y,
+                self.status.into_bits(),
+                self.reg_s,
+                self.cycle_debug
+            );
             self.printed = true;
+
+            // println!(
+            // "{:04X} {:?} val: {:02X} addr: {:02X}                A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:{}",
+            // self.reg_pc - 1 - self.num_operands as u16,
+            // self.curr_inst.as_mut().unwrap(),
+            // self.value,
+            // self.addr,
+            // self.reg_a,
+            // self.reg_x,
+            // self.reg_y,
+            // self.status.into_bits(),
+            // self.reg_s,
+            // self.cycle_debug
+            // );
         }
         let mut total_cost = 0;
         let max = match only_free {

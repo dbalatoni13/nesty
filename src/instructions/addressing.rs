@@ -8,7 +8,7 @@ pub enum MemoryOp {
 }
 
 pub fn read_mem(cpu: &mut CPU) {
-    cpu.ic.read_mem(cpu.addr);
+    cpu.value = cpu.ic.read_mem(cpu.addr);
 }
 
 pub fn write_mem(cpu: &mut CPU) {
@@ -19,7 +19,7 @@ pub fn queue_push_memory_op(cpu: &mut CPU, op: MemoryOp) {
     let Some(inst) = cpu.curr_inst.as_mut() else {
         panic!("No instruction");
     };
-
+    // TODO make cycle accurate   
     match inst.addr_mode {
         AddressingMode::Illegal => panic!("Illegal addressing mode"),
         AddressingMode::ZeroPageIndexedX => {

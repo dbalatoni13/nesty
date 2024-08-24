@@ -13,24 +13,28 @@ fn set_register_with_flags(reg: &mut u8, status: &mut Status, value: u8) {
 }
 
 fn handle_successful_branching(cpu: &mut CPU) {
-    cpu.inst_queue.push_back((nop_1, 1));
+    cpu.inst_queue.push_back((nop, 1));
     if cpu.reg_pc & 0xFF00 != cpu.addr & 0xFF00 {
         // new page
-        cpu.inst_queue.push_back((nop_1, 1));
+        cpu.inst_queue.push_back((nop, 1));
     }
     cpu.reg_pc = cpu.addr;
 }
 
 pub fn adc_1(cpu: &mut CPU) {
-    let old_bit_7 = cpu.reg_a & 0b10000000 != 0;
-    let (sum, overflow) =
-        (cpu.reg_a as i8).overflowing_add(cpu.value as i8 + cpu.status.carry() as i8);
-    cpu.reg_a = sum as u8;
+    let carry_6 =
+        (((cpu.reg_a & 0b01111111) + (cpu.value & 0b01111111) + cpu.status.carry() as u8)
+            & 0b10000000)
+            != 0;
+    let (sum1, overflow1) = cpu.reg_a.overflowing_add(cpu.value);
+    let (sum, overflow2) = sum1.overflowing_add(cpu.status.carry() as u8);
+    let overflow = overflow1 | overflow2;
+
     cpu.status.set_carry(overflow);
-    let new_bit_7 = cpu.reg_a & 0b10000000 != 0;
-    cpu.status.set_overflow(old_bit_7 ^ new_bit_7);
-    cpu.status.set_zero(cpu.reg_a == 0);
-    cpu.status.set_negative(new_bit_7);
+    cpu.status.set_zero(sum == 0);
+    cpu.status.set_overflow(carry_6 ^ overflow);
+    cpu.status.set_negative(sum & 0b10000000 != 0);
+    cpu.reg_a = sum as u8;
 }
 
 pub fn and_1(cpu: &mut CPU) {
@@ -102,6 +106,7 @@ pub fn bpl_1(cpu: &mut CPU) {
 }
 
 pub fn brk_1(cpu: &mut CPU) {
+    cpu.status.set_b(true);
     cpu.push_to_stack(get_msb(cpu.reg_pc));
 }
 
@@ -115,7 +120,6 @@ pub fn brk_3(cpu: &mut CPU) {
 
 pub fn brk_4(cpu: &mut CPU) {
     cpu.reg_pc = cpu.ic.read_mem_word(IRQ_VECTOR_ADDR);
-    cpu.status.set_b(true);
 }
 
 pub fn bvc_1(cpu: &mut CPU) {
@@ -168,6 +172,11 @@ pub fn cpy_1(cpu: &mut CPU) {
 }
 
 pub fn dec_1(cpu: &mut CPU) {
+    // Dummy write
+    cpu.ic.write_mem(cpu.addr, cpu.value);
+}
+
+pub fn dec_2(cpu: &mut CPU) {
     let sub = cpu.value.wrapping_sub(1);
     cpu.ic.write_mem(cpu.addr, sub);
     cpu.status.set_zero(sub == 0);
@@ -175,7 +184,7 @@ pub fn dec_1(cpu: &mut CPU) {
 }
 
 pub fn dex_1(cpu: &mut CPU) {
-    let sub = cpu.reg_y.wrapping_sub(1);
+    let sub = cpu.reg_x.wrapping_sub(1);
     set_register_with_flags(&mut cpu.reg_x, &mut cpu.status, sub);
 }
 
@@ -190,8 +199,13 @@ pub fn eor_1(cpu: &mut CPU) {
 }
 
 pub fn inc_1(cpu: &mut CPU) {
+    // Dummy write
+    cpu.ic.write_mem(cpu.addr, cpu.value);
+}
+
+pub fn inc_2(cpu: &mut CPU) {
     let inc = cpu.value.wrapping_add(1);
-    cpu.ic.write_mem(cpu.addr, cpu.value.wrapping_add(1));
+    cpu.ic.write_mem(cpu.addr, inc);
     cpu.status.set_zero(inc == 0);
     cpu.status.set_negative(inc & 0b10000000 != 0);
 }
@@ -208,17 +222,17 @@ pub fn iny_1(cpu: &mut CPU) {
 
 pub fn jmp_1(cpu: &mut CPU) {
     cpu.reg_pc = cpu.addr;
-    println!("Jumped to {:#02X}", cpu.addr);
+    // println!("Jumped to {:#02X}", cpu.addr);
 }
 
 pub fn jsr_1(cpu: &mut CPU) {
-    cpu.push_to_stack(get_msb(cpu.reg_pc));
+    cpu.push_to_stack(get_msb(cpu.reg_pc - 1));
 }
 
 pub fn jsr_2(cpu: &mut CPU) {
-    cpu.push_to_stack(get_lsb(cpu.reg_pc));
+    cpu.push_to_stack(get_lsb(cpu.reg_pc - 1));
     cpu.reg_pc = cpu.addr;
-    println!("Jumped to {:#02X}", cpu.addr);
+    // println!("Jumped to {:#02X}", cpu.addr);
 }
 
 pub fn lda_1(cpu: &mut CPU) {
@@ -254,7 +268,7 @@ pub fn lsr_1(cpu: &mut CPU) {
     }
 }
 
-pub fn nop_1(cpu: &mut CPU) {}
+pub fn nop(cpu: &mut CPU) {}
 
 pub fn ora_1(cpu: &mut CPU) {
     let orred = cpu.reg_a | cpu.value;
@@ -266,7 +280,7 @@ pub fn pha_1(cpu: &mut CPU) {
 }
 
 pub fn php_1(cpu: &mut CPU) {
-    cpu.push_to_stack(cpu.status.into_bits());
+    cpu.push_to_stack(cpu.status.with_b(true).into_bits());
 }
 
 pub fn pla_1(cpu: &mut CPU) {
@@ -275,8 +289,10 @@ pub fn pla_1(cpu: &mut CPU) {
 }
 
 pub fn plp_1(cpu: &mut CPU) {
-    let s = cpu.pull_from_stack();
-    cpu.status = Status::from_bits(s);
+    let s = Status::from_bits(cpu.pull_from_stack())
+        .with_b(false)
+        .with_one(true);
+    cpu.status = Status::from_bits(s.into_bits());
 }
 
 pub fn rol_1(cpu: &mut CPU) {
@@ -332,25 +348,31 @@ pub fn rti_3(cpu: &mut CPU) {
 }
 
 pub fn rts_1(cpu: &mut CPU) {
-    cpu.reg_pc = cpu.pull_from_stack() as u16;
+    let lsb = cpu.pull_from_stack();
+    cpu.reg_pc = lsb as u16;
 }
 
 pub fn rts_2(cpu: &mut CPU) {
-    cpu.reg_pc = (cpu.pull_from_stack() as u16) << 8 + 1;
-    println!("Jumped to {:#02X}", cpu.reg_pc);
+    let msb = cpu.pull_from_stack();
+    cpu.reg_pc += ((msb as u16) << 8) + 1;
+    // println!("Jumped to {:#02X}", cpu.reg_pc);
 }
 
 pub fn sbc_1(cpu: &mut CPU) {
-    // TODO does this work? we need to consider 'decimal mode' too
-    let old_bit_7 = cpu.reg_a & 0b10000000 != 0;
-    let (sum, overflow) =
-        (cpu.reg_a as i8).overflowing_sub(cpu.value as i8 + cpu.status.carry() as i8);
-    cpu.reg_a = sum as u8;
+    let carry_6 = ((cpu.reg_a & 0b01111111)
+        .wrapping_sub(cpu.value & 0b01111111)
+        .wrapping_sub(1 - cpu.status.carry() as u8)
+        & 0b10000000)
+        != 0;
+    let (sub1, overflow1) = cpu.reg_a.overflowing_sub(cpu.value);
+    let (sub, overflow2) = sub1.overflowing_sub(1 - cpu.status.carry() as u8);
+    let overflow = overflow1 | overflow2;
+
     cpu.status.set_carry(!overflow);
-    let new_bit_7 = cpu.reg_a & 0b10000000 != 0;
-    cpu.status.set_overflow(old_bit_7 ^ new_bit_7);
-    cpu.status.set_zero(cpu.reg_a == 0);
-    cpu.status.set_negative(new_bit_7);
+    cpu.status.set_zero(sub == 0);
+    cpu.status.set_overflow(carry_6 ^ overflow);
+    cpu.status.set_negative(sub & 0b10000000 != 0);
+    cpu.reg_a = sub as u8;
 }
 
 pub fn sec_1(cpu: &mut CPU) {
